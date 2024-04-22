@@ -59,7 +59,7 @@ module.exports = {
     },
     bitlayer: {
       url: `${BITLAYER_NETWORK_RPC}`,
-      chainId:  200810,
+      chainId:  200901,
       gasPrice: 110000000,
       accounts: [`0x${BITLAYER_DEPLOYER_PRIVATE_KEY}`]
     },
