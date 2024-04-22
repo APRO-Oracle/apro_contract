@@ -1,0 +1,21 @@
+{
+  "name": "apro-oracle",
+  "version": "1.0.0",
+  "description": "Apro smart contracts",
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "private": false,
+  "scripts": {
+    "compile": "npx hardhat compile"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0"
+  },
+  "dependencies": {
+    "@chainlink/contracts": "^0.8.0",
+    "dotenv": "^16.4.5",
+    "undici": "^6.10.1",
+    "web3": "^1.10.4"
+  }
+}
