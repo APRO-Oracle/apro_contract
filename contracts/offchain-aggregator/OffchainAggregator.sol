@@ -4,7 +4,7 @@ pragma solidity 0.7.6;
 import "./AccessControllerInterface.sol";
 import "./AggregatorV2V3Interface.sol";
 import "./AggregatorValidatorInterface.sol";
-import "./LinkTokenInterface.sol";
+import "./AproTokenInterface.sol";
 import "./Owned.sol";
 import "./OffchainAggregatorBilling.sol";
 import "./TypeAndVersionInterface.sol";
@@ -61,10 +61,10 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
   /*
    * @param _maximumGasPrice highest gas price for which transmitter will be compensated
    * @param _reasonableGasPrice transmitter will receive reward for gas prices under this value
-   * @param _microLinkPerEth reimbursement per ETH of gas cost, in 1e-6LINK units
-   * @param _linkGweiPerObservation reward to oracle for contributing an observation to a successfully transmitted report, in 1e-9LINK units
-   * @param _linkGweiPerTransmission reward to transmitter of a successful report, in 1e-9LINK units
-   * @param _link address of the LINK contract
+   * @param _microAproPerEth reimbursement per ETH of gas cost, in 1e-6APRO units
+   * @param _aproGweiPerObservation reward to oracle for contributing an observation to a successfully transmitted report, in 1e-9APRO units
+   * @param _aproGweiPerTransmission reward to transmitter of a successful report, in 1e-9APRO units
+   * @param _apro address of the APRO contract
    * @param _minAnswer lowest answer the median of a report is allowed to be
    * @param _maxAnswer highest answer the median of a report is allowed to be
    * @param _billingAccessController access controller for billing admin functions
@@ -75,10 +75,10 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
   constructor(
     uint32 _maximumGasPrice,
     uint32 _reasonableGasPrice,
-    uint32 _microLinkPerEth,
-    uint32 _linkGweiPerObservation,
-    uint32 _linkGweiPerTransmission,
-    LinkTokenInterface _link,
+    uint32 _microAproPerEth,
+    uint32 _aproGweiPerObservation,
+    uint32 _aproGweiPerTransmission,
+    AproTokenInterface _apro,
     int192 _minAnswer,
     int192 _maxAnswer,
     AccessControllerInterface _billingAccessController,
@@ -86,8 +86,8 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     uint8 _decimals,
     string memory _description
   )
-    OffchainAggregatorBilling(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
-      _linkGweiPerObservation, _linkGweiPerTransmission, _link,
+    OffchainAggregatorBilling(_maximumGasPrice, _reasonableGasPrice, _microAproPerEth,
+      _aproGweiPerObservation, _aproGweiPerTransmission, _apro,
       _billingAccessController
     )
   {
@@ -485,21 +485,6 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     bytes observers,
     bytes32 rawReportContext
   );
-
-  // decodeReport is used to check that the solidity and go code are using the
-  // same format. See TestOffchainAggregator.testDecodeReport and TestReportParsing
-  function decodeReport(bytes memory _report)
-    internal
-    pure
-    returns (
-      bytes32 rawReportContext,
-      bytes32 rawObservers,
-      int192[] memory observations
-    )
-  {
-    (rawReportContext, rawObservers, observations) = abi.decode(_report,
-      (bytes32, bytes32, int192[]));
-  }
 
   // Used to relieve stack pressure in transmit
   struct ReportData {

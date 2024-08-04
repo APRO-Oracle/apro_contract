@@ -2,7 +2,7 @@
 pragma solidity 0.7.6;
 
 import "./AccessControllerInterface.sol";
-import "./LinkTokenInterface.sol";
+import "./AproTokenInterface.sol";
 import "./Owned.sol";
 
 /**
@@ -53,21 +53,21 @@ contract OffchainAggregatorBilling is Owned {
     // If gas price is less (in ETH-gwei units), transmitter gets half the savings
     uint32 reasonableGasPrice;
 
-    // Pay transmitter back this much LINK per unit eth spent on gas
-    // (1e-6LINK/ETH units)
-    uint32 microLinkPerEth;
+    // Pay transmitter back this much APRO per unit eth spent on gas
+    // (1e-6APRO/ETH units)
+    uint32 microAproPerEth;
 
-    // Fixed LINK reward for each observer, in LINK-gwei units
-    uint32 linkGweiPerObservation;
+    // Fixed APRO reward for each observer, in APRO-gwei units
+    uint32 aproGweiPerObservation;
 
-    // Fixed reward for transmitter, in linkGweiPerObservation units
-    uint32 linkGweiPerTransmission;
+    // Fixed reward for transmitter, in aproGweiPerObservation units
+    uint32 aproGweiPerTransmission;
   }
   Billing internal s_billing;
 
   // We assume that the token contract is correct. This contract is not written
   // to handle misbehaving ERC20 tokens!
-  LinkTokenInterface internal s_linkToken;
+  AproTokenInterface internal s_aproToken;
 
   AccessControllerInterface internal s_billingAccessController;
 
@@ -92,7 +92,7 @@ contract OffchainAggregatorBilling is Owned {
     internal
     s_proposedPayees;
 
-  // LINK-wei-denominated reimbursements for gas used by transmitters.
+  // APRO-wei-denominated reimbursements for gas used by transmitters.
   //
   // This is always one greater than the actual value, so that when the value is
   // reset to zero, we don't end up with a zero value in storage (which would
@@ -105,12 +105,12 @@ contract OffchainAggregatorBilling is Owned {
   // - 2**32 gas price in ethgwei/gas
   // - 1e9 ethwei/ethgwei
   // - 2**32 gas since the block gas limit is at ~20 million
-  // - 2**32 (microlink/eth)
+  // - 2**32 (microapro/eth)
   // And we have 2**40 * 2**32 * 1e9 * 2**32 * 2**32 < 2**166
   // (we also divide in some places, but that only makes the value smaller)
   // We can thus safely use uint256 intermediate values for the computation
   // updating this variable.
-  uint256[maxNumOracles] internal s_gasReimbursementsLinkWei;
+  uint256[maxNumOracles] internal s_gasReimbursementsAproWei;
 
   // Used for s_oracles[a].role, where a is an address, to track the purpose
   // of the address, or to indicate that the address is unset.
@@ -147,131 +147,131 @@ contract OffchainAggregatorBilling is Owned {
   constructor(
     uint32 _maximumGasPrice,
     uint32 _reasonableGasPrice,
-    uint32 _microLinkPerEth,
-    uint32 _linkGweiPerObservation,
-    uint32 _linkGweiPerTransmission,
-    LinkTokenInterface _link,
+    uint32 _microAproPerEth,
+    uint32 _aproGweiPerObservation,
+    uint32 _aproGweiPerTransmission,
+    AproTokenInterface _apro,
     AccessControllerInterface _billingAccessController
   )
   {
-    setBillingInternal(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
-      _linkGweiPerObservation, _linkGweiPerTransmission);
-    s_linkToken = _link;
-    emit LinkTokenSet(LinkTokenInterface(address(0)), _link);
+    setBillingInternal(_maximumGasPrice, _reasonableGasPrice, _microAproPerEth,
+      _aproGweiPerObservation, _aproGweiPerTransmission);
+    s_aproToken = _apro;
+    emit AproTokenSet(AproTokenInterface(address(0)), _apro);
     setBillingAccessControllerInternal(_billingAccessController);
     uint16[maxNumOracles] memory counts; // See s_oracleObservationsCounts docstring
-    uint256[maxNumOracles] memory gas; // see s_gasReimbursementsLinkWei docstring
+    uint256[maxNumOracles] memory gas; // see s_gasReimbursementsAproWei docstring
     for (uint8 i = 0; i < maxNumOracles; i++) {
       counts[i] = 1;
       gas[i] = 1;
     }
     s_oracleObservationsCounts = counts;
-    s_gasReimbursementsLinkWei = gas;
+    s_gasReimbursementsAproWei = gas;
   }
 
   /*
-   * @notice emitted when the LINK token contract is set
-   * @param _oldLinkToken the address of the old LINK token contract
-   * @param _newLinkToken the address of the new LINK token contract
+   * @notice emitted when the APRO token contract is set
+   * @param _oldAproToken the address of the old APRO token contract
+   * @param _newAproToken the address of the new APRO token contract
    */
-  event LinkTokenSet(
-    LinkTokenInterface indexed _oldLinkToken,
-    LinkTokenInterface indexed _newLinkToken
+  event AproTokenSet(
+    AproTokenInterface indexed _oldAproToken,
+    AproTokenInterface indexed _newAproToken
   );
 
   /*
-   * @notice sets the LINK token contract used for paying oracles
-   * @param _linkToken the address of the LINK token contract
+   * @notice sets the APRO token contract used for paying oracles
+   * @param _aproToken the address of the APRO token contract
    * @param _recipient remaining funds from the previous token contract are transfered
    * here
    * @dev this function will return early (without an error) without changing any state
-   * if _linkToken equals getLinkToken().
+   * if _aproToken equals getAproToken().
    * @dev this will trigger a payout so that a malicious owner cannot take from oracles
    * what is already owed to them.
    * @dev we assume that the token contract is correct. This contract is not written
    * to handle misbehaving ERC20 tokens!
    */
-  function setLinkToken(
-    LinkTokenInterface _linkToken,
+  function setAproToken(
+    AproTokenInterface _aproToken,
     address _recipient
   ) external
     onlyOwner()
   {
-    LinkTokenInterface oldLinkToken = s_linkToken;
-    if (_linkToken == oldLinkToken) {
+    AproTokenInterface oldAproToken = s_aproToken;
+    if (_aproToken == oldAproToken) {
       // No change, nothing to be done
       return;
     }
     // call balanceOf as a sanity check on whether we're talking to a token
     // contract
-    _linkToken.balanceOf(address(this));
+    _aproToken.balanceOf(address(this));
     // we break CEI here, but that's okay because we're dealing with a correct
     // token contract (by assumption).
     payOracles();
-    uint256 remainingBalance = oldLinkToken.balanceOf(address(this));
-    require(oldLinkToken.transfer(_recipient, remainingBalance), "transfer remaining funds failed");
-    s_linkToken = _linkToken;
-    emit LinkTokenSet(oldLinkToken, _linkToken);
+    uint256 remainingBalance = oldAproToken.balanceOf(address(this));
+    require(oldAproToken.transfer(_recipient, remainingBalance), "transfer remaining funds failed");
+    s_aproToken = _aproToken;
+    emit AproTokenSet(oldAproToken, _aproToken);
   }
 
   /*
-   * @notice gets the LINK token contract used for paying oracles
-   * @return linkToken the address of the LINK token contract
+   * @notice gets the APRO token contract used for paying oracles
+   * @return aproToken the address of the APRO token contract
    */
-  function getLinkToken()
+  function getAproToken()
     external
     view
-    returns(LinkTokenInterface linkToken)
+    returns(AproTokenInterface aproToken)
   {
-    return s_linkToken;
+    return s_aproToken;
   }
 
   /**
    * @notice emitted when billing parameters are set
    * @param maximumGasPrice highest gas price for which transmitter will be compensated
    * @param reasonableGasPrice transmitter will receive reward for gas prices under this value
-   * @param microLinkPerEth reimbursement per ETH of gas cost, in 1e-6LINK units
-   * @param linkGweiPerObservation reward to oracle for contributing an observation to a successfully transmitted report, in 1e-9LINK units
-   * @param linkGweiPerTransmission reward to transmitter of a successful report, in 1e-9LINK units
+   * @param microAproPerEth reimbursement per ETH of gas cost, in 1e-6APRO units
+   * @param aproGweiPerObservation reward to oracle for contributing an observation to a successfully transmitted report, in 1e-9APRO units
+   * @param aproGweiPerTransmission reward to transmitter of a successful report, in 1e-9APRO units
    */
   event BillingSet(
     uint32 maximumGasPrice,
     uint32 reasonableGasPrice,
-    uint32 microLinkPerEth,
-    uint32 linkGweiPerObservation,
-    uint32 linkGweiPerTransmission
+    uint32 microAproPerEth,
+    uint32 aproGweiPerObservation,
+    uint32 aproGweiPerTransmission
   );
 
   function setBillingInternal(
     uint32 _maximumGasPrice,
     uint32 _reasonableGasPrice,
-    uint32 _microLinkPerEth,
-    uint32 _linkGweiPerObservation,
-    uint32 _linkGweiPerTransmission
+    uint32 _microAproPerEth,
+    uint32 _aproGweiPerObservation,
+    uint32 _aproGweiPerTransmission
   )
     internal
   {
-    s_billing = Billing(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
-      _linkGweiPerObservation, _linkGweiPerTransmission);
-    emit BillingSet(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
-      _linkGweiPerObservation, _linkGweiPerTransmission);
+    s_billing = Billing(_maximumGasPrice, _reasonableGasPrice, _microAproPerEth,
+      _aproGweiPerObservation, _aproGweiPerTransmission);
+    emit BillingSet(_maximumGasPrice, _reasonableGasPrice, _microAproPerEth,
+      _aproGweiPerObservation, _aproGweiPerTransmission);
   }
 
   /**
    * @notice sets billing parameters
    * @param _maximumGasPrice highest gas price for which transmitter will be compensated
    * @param _reasonableGasPrice transmitter will receive reward for gas prices under this value
-   * @param _microLinkPerEth reimbursement per ETH of gas cost, in 1e-6LINK units
-   * @param _linkGweiPerObservation reward to oracle for contributing an observation to a successfully transmitted report, in 1e-9LINK units
-   * @param _linkGweiPerTransmission reward to transmitter of a successful report, in 1e-9LINK units
+   * @param _microAproPerEth reimbursement per ETH of gas cost, in 1e-6APRO units
+   * @param _aproGweiPerObservation reward to oracle for contributing an observation to a successfully transmitted report, in 1e-9APRO units
+   * @param _aproGweiPerTransmission reward to transmitter of a successful report, in 1e-9APRO units
    * @dev access control provided by billingAccessController
    */
   function setBilling(
     uint32 _maximumGasPrice,
     uint32 _reasonableGasPrice,
-    uint32 _microLinkPerEth,
-    uint32 _linkGweiPerObservation,
-    uint32 _linkGweiPerTransmission
+    uint32 _microAproPerEth,
+    uint32 _aproGweiPerObservation,
+    uint32 _aproGweiPerTransmission
   )
     external
   {
@@ -279,17 +279,17 @@ contract OffchainAggregatorBilling is Owned {
     require(msg.sender == owner || access.hasAccess(msg.sender, msg.data),
       "Only owner&billingAdmin can call");
     payOracles();
-    setBillingInternal(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
-      _linkGweiPerObservation, _linkGweiPerTransmission);
+    setBillingInternal(_maximumGasPrice, _reasonableGasPrice, _microAproPerEth,
+      _aproGweiPerObservation, _aproGweiPerTransmission);
   }
 
   /**
    * @notice gets billing parameters
    * @param maximumGasPrice highest gas price for which transmitter will be compensated
    * @param reasonableGasPrice transmitter will receive reward for gas prices under this value
-   * @param microLinkPerEth reimbursement per ETH of gas cost, in 1e-6LINK units
-   * @param linkGweiPerObservation reward to oracle for contributing an observation to a successfully transmitted report, in 1e-9LINK units
-   * @param linkGweiPerTransmission reward to transmitter of a successful report, in 1e-9LINK units
+   * @param microAproPerEth reimbursement per ETH of gas cost, in 1e-6APRO units
+   * @param aproGweiPerObservation reward to oracle for contributing an observation to a successfully transmitted report, in 1e-9APRO units
+   * @param aproGweiPerTransmission reward to transmitter of a successful report, in 1e-9APRO units
    */
   function getBilling()
     external
@@ -297,18 +297,18 @@ contract OffchainAggregatorBilling is Owned {
     returns (
       uint32 maximumGasPrice,
       uint32 reasonableGasPrice,
-      uint32 microLinkPerEth,
-      uint32 linkGweiPerObservation,
-      uint32 linkGweiPerTransmission
+      uint32 microAproPerEth,
+      uint32 aproGweiPerObservation,
+      uint32 aproGweiPerTransmission
     )
   {
     Billing memory billing = s_billing;
     return (
       billing.maximumGasPrice,
       billing.reasonableGasPrice,
-      billing.microLinkPerEth,
-      billing.linkGweiPerObservation,
-      billing.linkGweiPerTransmission
+      billing.microAproPerEth,
+      billing.aproGweiPerObservation,
+      billing.aproGweiPerTransmission
     );
   }
 
@@ -380,26 +380,26 @@ contract OffchainAggregatorBilling is Owned {
     Oracle memory oracle = s_oracles[_transmitter];
     if (oracle.role == Role.Unset) { return 0; }
     Billing memory billing = s_billing;
-    uint256 linkWeiAmount =
+    uint256 aproWeiAmount =
       uint256(s_oracleObservationsCounts[oracle.index] - 1) *
-      uint256(billing.linkGweiPerObservation) *
+      uint256(billing.aproGweiPerObservation) *
       (1 gwei);
-    linkWeiAmount += s_gasReimbursementsLinkWei[oracle.index] - 1;
-    return linkWeiAmount;
+    aproWeiAmount += s_gasReimbursementsAproWei[oracle.index] - 1;
+    return aproWeiAmount;
   }
 
   /**
-   * @notice emitted when an oracle has been paid LINK
+   * @notice emitted when an oracle has been paid APRO
    * @param transmitter address from which the oracle sends reports to the transmit method
    * @param payee address to which the payment is sent
-   * @param amount amount of LINK sent
-   * @param linkToken address of the LINK token contract
+   * @param amount amount of APRO sent
+   * @param aproToken address of the APRO token contract
    */
   event OraclePaid(
     address indexed transmitter,
     address indexed payee,
     uint256 amount,
-    LinkTokenInterface indexed linkToken
+    AproTokenInterface indexed aproToken
   );
 
   // payOracle pays out _transmitter's balance to the corresponding payee, and zeros it out
@@ -407,15 +407,15 @@ contract OffchainAggregatorBilling is Owned {
     internal
   {
     Oracle memory oracle = s_oracles[_transmitter];
-    uint256 linkWeiAmount = owedPayment(_transmitter);
-    if (linkWeiAmount > 0) {
+    uint256 aproWeiAmount = owedPayment(_transmitter);
+    if (aproWeiAmount > 0) {
       address payee = s_payees[_transmitter];
-      // Poses no re-entrancy issues, because LINK.transfer does not yield
+      // Poses no re-entrancy issues, because APRO.transfer does not yield
       // control flow.
-      require(s_linkToken.transfer(payee, linkWeiAmount), "insufficient funds");
+      require(s_aproToken.transfer(payee, aproWeiAmount), "insufficient funds");
       s_oracleObservationsCounts[oracle.index] = 1; // "zero" the counts. see var's docstring
-      s_gasReimbursementsLinkWei[oracle.index] = 1; // "zero" the counts. see var's docstring
-      emit OraclePaid(_transmitter, payee, linkWeiAmount, s_linkToken);
+      s_gasReimbursementsAproWei[oracle.index] = 1; // "zero" the counts. see var's docstring
+      emit OraclePaid(_transmitter, payee, aproWeiAmount, s_aproToken);
     }
   }
 
@@ -427,29 +427,29 @@ contract OffchainAggregatorBilling is Owned {
     internal
   {
     Billing memory billing = s_billing;
-    LinkTokenInterface linkToken = s_linkToken;
+    AproTokenInterface aproToken = s_aproToken;
     uint16[maxNumOracles] memory observationsCounts = s_oracleObservationsCounts;
-    uint256[maxNumOracles] memory gasReimbursementsLinkWei =
-      s_gasReimbursementsLinkWei;
+    uint256[maxNumOracles] memory gasReimbursementsAproWei =
+      s_gasReimbursementsAproWei;
     address[] memory transmitters = s_transmitters;
     for (uint transmitteridx = 0; transmitteridx < transmitters.length; transmitteridx++) {
-      uint256 reimbursementAmountLinkWei = gasReimbursementsLinkWei[transmitteridx] - 1;
+      uint256 reimbursementAmountAproWei = gasReimbursementsAproWei[transmitteridx] - 1;
       uint256 obsCount = observationsCounts[transmitteridx] - 1;
-      uint256 linkWeiAmount =
-        obsCount * uint256(billing.linkGweiPerObservation) * (1 gwei) + reimbursementAmountLinkWei;
-      if (linkWeiAmount > 0) {
+      uint256 aproWeiAmount =
+        obsCount * uint256(billing.aproGweiPerObservation) * (1 gwei) + reimbursementAmountAproWei;
+      if (aproWeiAmount > 0) {
           address payee = s_payees[transmitters[transmitteridx]];
-          // Poses no re-entrancy issues, because LINK.transfer does not yield
+          // Poses no re-entrancy issues, because APRO.transfer does not yield
           // control flow.
-          require(linkToken.transfer(payee, linkWeiAmount), "insufficient funds");
+          require(aproToken.transfer(payee, aproWeiAmount), "insufficient funds");
           observationsCounts[transmitteridx] = 1;       // "zero" the counts.
-          gasReimbursementsLinkWei[transmitteridx] = 1; // "zero" the counts.
-          emit OraclePaid(transmitters[transmitteridx], payee, linkWeiAmount, linkToken);
+          gasReimbursementsAproWei[transmitteridx] = 1; // "zero" the counts.
+          emit OraclePaid(transmitters[transmitteridx], payee, aproWeiAmount, aproToken);
         }
     }
     // "Zero" the accounting storage variables
     s_oracleObservationsCounts = observationsCounts;
-    s_gasReimbursementsLinkWei = gasReimbursementsLinkWei;
+    s_gasReimbursementsAproWei = gasReimbursementsAproWei;
   }
 
   function oracleRewards(
@@ -485,13 +485,13 @@ contract OffchainAggregatorBilling is Owned {
   //      .
   //      .
   //      .
-  //     59        uint256 gasCostLinkWei = (gasCostEthWei * billing.microLinkPerEth)/ 1e6;
+  //     59        uint256 gasCostAproWei = (gasCostEthWei * billing.microAproPerEth)/ 1e6;
   //      .
   //      .
   //      .
-  //   5047        s_gasReimbursementsLinkWei[txOracle.index] =
-  //    856          s_gasReimbursementsLinkWei[txOracle.index] + gasCostLinkWei +
-  //     26          uint256(billing.linkGweiPerTransmission) * (1 gwei);
+  //   5047        s_gasReimbursementsAproWei[txOracle.index] =
+  //    856          s_gasReimbursementsAproWei[txOracle.index] + gasCostAproWei +
+  //     26          uint256(billing.aproGweiPerTransmission) * (1 gwei);
   //
   // If those were the only lines to be accounted for, you would add up
   // 29+9+3+3+3+59+5047+856+26=6035.
@@ -553,7 +553,7 @@ contract OffchainAggregatorBilling is Owned {
   /**
    * @notice withdraw any available funds left in the contract, up to _amount, after accounting for the funds due to participants in past reports
    * @param _recipient address to send funds to
-   * @param _amount maximum amount to withdraw, denominated in LINK-wei.
+   * @param _amount maximum amount to withdraw, denominated in APRO-wei.
    * @dev access control provided by billingAccessController
    */
   function withdrawFunds(address _recipient, uint256 _amount)
@@ -561,56 +561,56 @@ contract OffchainAggregatorBilling is Owned {
   {
     require(msg.sender == owner || s_billingAccessController.hasAccess(msg.sender, msg.data),
       "Only owner&billingAdmin can call");
-    uint256 linkDue = totalLINKDue();
-    uint256 linkBalance = s_linkToken.balanceOf(address(this));
-    require(linkBalance >= linkDue, "insufficient balance");
-    require(s_linkToken.transfer(_recipient, min(linkBalance - linkDue, _amount)), "insufficient funds");
+    uint256 aproDue = totalAPRODue();
+    uint256 aproBalance = s_aproToken.balanceOf(address(this));
+    require(aproBalance >= aproDue, "insufficient balance");
+    require(s_aproToken.transfer(_recipient, min(aproBalance - aproDue, _amount)), "insufficient funds");
   }
 
-  // Total LINK due to participants in past reports.
-  function totalLINKDue()
+  // Total APRO due to participants in past reports.
+  function totalAPRODue()
     internal
     view
-    returns (uint256 linkDue)
+    returns (uint256 aproDue)
   {
     // Argument for overflow safety: We do all computations in
-    // uint256s. The inputs to linkDue are:
+    // uint256s. The inputs to aproDue are:
     // - the <= 31 observation rewards each of which has less than
-    //   64 bits (32 bits for billing.linkGweiPerObservation, 32 bits
+    //   64 bits (32 bits for billing.aproGweiPerObservation, 32 bits
     //   for wei/gwei conversion). Hence 69 bits are sufficient for this part.
     // - the <= 31 gas reimbursements, each of which consists of at most 166
-    //   bits (see s_gasReimbursementsLinkWei docstring). Hence 171 bits are
+    //   bits (see s_gasReimbursementsAproWei docstring). Hence 171 bits are
     //   sufficient for this part
     // In total, 172 bits are enough.
     uint16[maxNumOracles] memory observationCounts = s_oracleObservationsCounts;
     for (uint i = 0; i < maxNumOracles; i++) {
-      linkDue += observationCounts[i] - 1; // Stored value is one greater than actual value
+      aproDue += observationCounts[i] - 1; // Stored value is one greater than actual value
     }
     Billing memory billing = s_billing;
-    // Convert linkGweiPerObservation to uint256, or this overflows!
-    linkDue *= uint256(billing.linkGweiPerObservation) * (1 gwei);
+    // Convert aproGweiPerObservation to uint256, or this overflows!
+    aproDue *= uint256(billing.aproGweiPerObservation) * (1 gwei);
     address[] memory transmitters = s_transmitters;
-    uint256[maxNumOracles] memory gasReimbursementsLinkWei =
-      s_gasReimbursementsLinkWei;
+    uint256[maxNumOracles] memory gasReimbursementsAproWei =
+      s_gasReimbursementsAproWei;
     for (uint i = 0; i < transmitters.length; i++) {
-      linkDue += uint256(gasReimbursementsLinkWei[i]-1); // Stored value is one greater than actual value
+      aproDue += uint256(gasReimbursementsAproWei[i]-1); // Stored value is one greater than actual value
     }
   }
 
   /**
-   * @notice allows oracles to check that sufficient LINK balance is available
-   * @return availableBalance LINK available on this contract, after accounting for outstanding obligations. can become negative
+   * @notice allows oracles to check that sufficient APRO balance is available
+   * @return availableBalance APRO available on this contract, after accounting for outstanding obligations. can become negative
    */
-  function linkAvailableForPayment()
+  function aproAvailableForPayment()
     external
     view
     returns (int256 availableBalance)
   {
-    // there are at most one billion LINK, so this cast is safe
-    int256 balance = int256(s_linkToken.balanceOf(address(this)));
-    // according to the argument in the definition of totalLINKDue,
-    // totalLINKDue is never greater than 2**172, so this cast is safe
-    int256 due = int256(totalLINKDue());
+    // there are at most one billion APRO, so this cast is safe
+    int256 balance = int256(s_aproToken.balanceOf(address(this)));
+    // according to the argument in the definition of totalAPRODue,
+    // totalAPRODue is never greater than 2**172, so this cast is safe
+    int256 due = int256(totalAPRODue());
     // safe from overflow according to above sizes
     return int256(balance) - int256(due);
   }
@@ -636,7 +636,7 @@ contract OffchainAggregatorBilling is Owned {
   )
     internal
   {
-    if(s_linkToken == LinkTokenInterface(address(0))) {
+    if(s_aproToken == AproTokenInterface(address(0))) {
       return;
     }
     Oracle memory txOracle = s_oracles[msg.sender];
@@ -667,20 +667,20 @@ contract OffchainAggregatorBilling is Owned {
       gasLeft
     );
 
-    // microLinkPerEth is 1e-6LINK/ETH units, gasCostEthWei is 1e-18ETH units
-    // (ETH-wei), product is 1e-24LINK-wei units, dividing by 1e6 gives
-    // 1e-18LINK units, i.e. LINK-wei units
+    // microAproPerEth is 1e-6APRO/ETH units, gasCostEthWei is 1e-18ETH units
+    // (ETH-wei), product is 1e-24APRO-wei units, dividing by 1e6 gives
+    // 1e-18APRO units, i.e. APRO-wei units
     // Safe from over/underflow, since all components are non-negative,
-    // gasCostEthWei will always fit into uint128 and microLinkPerEth is a
+    // gasCostEthWei will always fit into uint128 and microAproPerEth is a
     // uint32 (128+32 < 256!).
-    uint256 gasCostLinkWei = (gasCostEthWei * billing.microLinkPerEth)/ 1e6;
+    uint256 gasCostAproWei = (gasCostEthWei * billing.microAproPerEth)/ 1e6;
 
-    // Safe from overflow, because gasCostLinkWei < 2**160 and
-    // billing.linkGweiPerTransmission * (1 gwei) < 2**64 and we increment
-    // s_gasReimbursementsLinkWei[txOracle.index] at most 2**40 times.
-    s_gasReimbursementsLinkWei[txOracle.index] =
-      s_gasReimbursementsLinkWei[txOracle.index] + gasCostLinkWei +
-      uint256(billing.linkGweiPerTransmission) * (1 gwei); // convert from linkGwei to linkWei
+    // Safe from overflow, because gasCostAproWei < 2**160 and
+    // billing.aproGweiPerTransmission * (1 gwei) < 2**64 and we increment
+    // s_gasReimbursementsAproWei[txOracle.index] at most 2**40 times.
+    s_gasReimbursementsAproWei[txOracle.index] =
+      s_gasReimbursementsAproWei[txOracle.index] + gasCostAproWei +
+      uint256(billing.aproGweiPerTransmission) * (1 gwei); // convert from aproGwei to aproWei
 
     // Uncomment next line to compute the remaining gas cost after above gasleft().
     // See OffchainAggregatorBilling.accountingGasCost docstring for more information.
